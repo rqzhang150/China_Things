@@ -1,0 +1,177 @@
+---
+title: "Fixed Asset Investment (Provincial/Monthly)"
+author: "Ruoqi Zhang"
+date: "5/20/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(lubridate)
+library(stringr)
+```
+
+```{r data_import}
+
+provincial_fai <- read_excel("Provincial_Fixed_Asset_Investments_Monthly_2017_to_2019.xlsx")
+
+central <- c("Hubei", "Hunan", "Henan")
+northern <- c("Hebei", "Shanxi", "Beijing", "Tianjin", "Inner Mongolia")
+southern <- c("Guangdong", "Guangxi", "Hainan")
+eastern <- c("Jiangsu", "Zhejiang", "Anhui", "Fujian", "Jiangxi", "Shandong", "Shanghai")
+northeastern <- c("Liaoning", "Jilin", "Heilongjiang")
+southwestern <- c("Sichuan", "Yunnan", "Guizhou", "Chongqing", "Tibet", "Shaanxi")
+northwestern <- c("Ningxia", "Xinjiang", "Qinghai", "Gansu")
+
+regions <- c("central", "northern", "southern", "eastern", "northeastern", "southwestern", "northwestern")
+
+```
+
+# Visualization
+
+```{r}
+
+provincial_fai <- provincial_fai %>% 
+  group_by(`Province/Region`) %>% 
+  gather(key = "Time", value = "Value", `201702`:`201904`) %>% 
+  mutate(Time = paste0(Time, "01")) %>% 
+  mutate(Time = as.Date(Time, format = "%Y%m%d"))
+
+
+for (region in regions) {
+  provincial_fai  %>% 
+    filter(`Province/Region` %in% region) %>% 
+    ggplot(aes(x = Time, y = Value, color = `Province/Region`)) +
+      geom_line() +
+      theme_minimal() +
+      labs(x = NULL,
+           y = "YOY Growth (%)",
+           color = "Province/Region",
+           title = paste("Provincial Year-to-Date Fixed Asset Investment in", str_to_title(region), "China"),
+           caption = "Source: Provincial Bureau of Statistics for 2019 figures. National Bureau of Statistics for 2017-18 figures.") +
+      geom_hline(yintercept=0, linetype="dashed", color = "red")
+}
+
+  
+```
+
+
+```{r stats}
+fixed_asset_investment %>% 
+  filter(growth_percent < 0) %>% 
+  distinct(province_region) 
+
+```
+
+```{r}
+
+fixed_asset_investment %>% 
+  # filter(province_region == "Beijing") %>% 
+  group_by(province_region) %>% 
+  plot_ly()
+
+
+
+fixed_asset_investment %>% 
+  # filter(province_region == "Beijing") %>% 
+  group_by(province_region) %>% 
+  ggplot(aes(x = reported_time_yyyymm, y = growth_percent, color = province_region)) + 
+    geom_line() +
+    geom_point(size = 0.2)
+
+```
+
+```{r}
+Provincial_Retail_Sales_Data_Beijing %>% 
+  gather(key = "Data Series", value = "Value", `Monthly Amount`:`Aggregate YOY Growth (Jan - Current Mo)`) %>% 
+  spread(key = `Time/Period`, value = "Value") -> Result
+```
+
+```{r}
+Provincial_Retail_Sales_Data_Overall_New %>% 
+    gather(key = "Data Series", value = "Value", `Monthly Amount`:`Aggregate YOY Growth (Jan - Current Mo)`) %>% 
+  spread(key = `Time/Period`, value = "Value") -> Result
+
+write_csv(Result, "result.csv")
+
+```
+
+```{r map_visualization}
+library(sf)
+library(tidyverse)
+library(ggthemes)
+library(gganimate)
+library(ggrepel)
+```
+
+```{r}
+
+provincial_fai %>% 
+  ungroup() %>% 
+  select(Time) %>% 
+  distinct() %>% pull() -> available_time
+
+fai_gadm_format <- provincial_fai %>% 
+  ungroup() %>% 
+  mutate(`Province/Region` = str_replace_all(`Province/Region`, "Inner Mongolia", "Nei Mongol"),
+         `Province/Region` = str_replace_all(`Province/Region`, "Ningxia", "Ningxia Hui"),
+         `Province/Region` = str_replace_all(`Province/Region`, "Xinjiang", "Xinjiang Uygur"),
+         `Province/Region` = str_replace_all(`Province/Region`, "Tibet", "Xizang"))
+
+CHN_map <- read_rds("gadm36_CHN_1_sf.rds") %>%
+  st_simplify(preserveTopology = TRUE, dTolerance = 0.01)
+
+joined_fai_gadm <- fai_gadm_format %>% 
+  left_join(CHN_map, by = c("Province/Region" = "NAME_1"))
+
+for (year_month in available_time) {
+  year_month <- as_date(year_month)
+  
+ joined_fai_gadm %>% 
+  filter(Time == year_month) %>%
+  ggplot() +
+    geom_sf(aes(fill = Value)) +
+    # geom_sf_text(aes(label = `Province/Region`)) +
+    # transition_time(Time) +
+    theme_map() +
+    theme(panel.grid = element_line(color = "white")) +
+    scale_fill_gradient2(breaks = seq(from = -50, to = 50, by = 20),
+                         minor_breaks = seq(from = -50, to = 50, by = 10),
+                         labels = paste0(seq(from = -50, to = 50, by = 20), "%"),
+                         limits = c(-50, 50),
+                         low = "#ca0020",
+                         high = "#0571b0") +
+    labs(title = "Monthly Fixed Asset Investment Growth (YOY) in China",
+         subtitle = paste0(month(year_month, label = TRUE, abbr = FALSE), ", ", year(year_month)),
+         fill = "Growth (%)",
+         caption = "Sources: Provincial Bureau of Statistics and National Bureau of Statistics")
+  
+  ggsave(filename = paste0(year_month, ".png"))
+
+}
+month(year_month, label = TRUE, abbr = FALSE)
+
+fai_gadm_format %>% 
+  left_join(CHN_map, by = c("Province/Region" = "NAME_1")) %>% 
+  filter(Time %in% c(as_date("2019-02-01"), as_date("2019-03-01"))) %>%
+  ggplot() +
+    geom_sf(aes(fill = Value)) +
+    transition_states(Time, transition_length = 0, state_length = 1, wrap = TRUE) +
+    theme_map() +
+    theme(panel.grid = element_line(color = "white")) +
+    scale_fill_gradient2(breaks = seq(from = -50, to = 50, by = 20),
+                         minor_breaks = seq(from = -50, to = 50, by = 10),
+                         labels = paste0(seq(from = -50, to = 50, by = 20), "%"),
+                         limits = c(-50, 50),
+                         low = "#ca0020",
+                         high = "#0571b0") +
+    labs(title = "Fixed Asset Investment Growth (YOY)",
+         subtitle = "{closest_state}",
+         fill = "Growth (%)",
+         caption = "Sources: Provincial Bureau of Statistics and National Bureau of Statistics")
+
+```
+
